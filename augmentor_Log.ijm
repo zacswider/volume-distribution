@@ -3,7 +3,6 @@
  */
  
 #@ File (label = "Input directory", style = "directory") input
-#@ File (label = "Output directory", style = "directory") output
 #@ String (label = "File suffix", value = ".tif") suffix
 
 processFolder(input)
@@ -18,12 +17,12 @@ function processFolder(input) {
 			print(list[i] + " is a directory");
 		}
 		if(endsWith(list[i], suffix)){
-			processFile(input, output, list[i]);
+			processFile(input, list[i]);
 		}
 	}
 }
 
-function processFile(input, output, file) {
+function processFile(input, file) {
 	// open stack and split the channels
 	print("Opening " + input + "/" + file);
 	open(input + "/" + file);
