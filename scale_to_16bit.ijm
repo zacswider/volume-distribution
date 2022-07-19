@@ -32,10 +32,14 @@ function processFile(input, output, file) {
 	print("Opening " + input + "/" + file);
 	open(input + "/" + file);
 	run("Z Project...", "projection=[Max Intensity]");
-	getStatistics(area, mean, min, max, std, histogram);
+	getStatistics(maxarea, maxmean, maxmin, maxmax, maxstd, maxhistogram);
 	close("MAX_" + file);
 	selectWindow(file);
-	setMinAndMax(0.00, max);
+	run("Z Project...", "projection=[Min Intensity]");
+	getStatistics(minarea, minmean, minmin, minmax, minstd, minhistogram);
+	close("MIN_" + file);
+	selectWindow(file);
+	setMinAndMax(minmin, maxmax);
 	run("16-bit");
 	// get the file name without the extension
 	dotIndex = indexOf(file, "."); 
