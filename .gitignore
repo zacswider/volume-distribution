@@ -156,3 +156,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 >>>>>>> parent of 8a68ef1 (Delete 220624_Fix_Flvw_Emb_PI_Utr647_E02-10X-Z01_downsample_log_seg-cyto.npy)
+test.ipynb
+view_data.ipynb
+viewing.ipynb
