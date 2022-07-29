@@ -1,6 +1,6 @@
 # Volume Distribution
 
-#### This repository contains a collection of packages and pipelines for viewing and analyzing volumetric segmentations of *X. laevis* embryos. For this project I was specifically interested in quantifying the spatial location of the mitotic spindle within the cell volume as well as its alignment with the long axis of the cell. This readme describes some of the methods that I used to a) segment 3D cell volumes, b) filter poor quality segmentations, and c) measure the spatial properties of the cell and spindle.
+#### This repository contains a collection of packages and pipelines for viewing and fully automating the volumetric segmentations of *X. laevis* embryos. For this project I was specifically interested in quantifying the spatial location of the mitotic spindle within the cell volume as well as its alignment with the long axis of the cell. This readme describes some of the methods that I used to a) segment 3D cell volumes, b) filter poor quality segmentations, and c) measure the spatial properties of the cell and spindle.
 
 ### Upstream processing
 
@@ -26,13 +26,21 @@ After filtering, we are left with only cell shapes that match the data we used t
 
 <img src="https://github.com/zacswider/README_Images/blob/main/rotating_masks.gif" width="500">
 
-### Spindle and cell properties
+### Isolating spindles
 
-In principle, we could also train a segmentation model to specifically threshold spindle shapes, but in this case classic thresholding worked well. In order to avoid applying a blanket threshold value to the entire image, where bright and dim cells would be segmented unequally, we isolate individual cell masks, run a 3D tophat filter to increase contast, and calculate cell-specific threshold values. Given isolated masks, we can now easily quantify interesting metrics like the distance between the spindle and the volumetric center of the cell, or the angle difference between the alignment of the spindle and the long axis of the cell.
+In principle, we could also train a segmentation model to specifically threshold spindle shapes, but in this case classic thresholding worked well. In order to avoid applying a blanket threshold value to the entire image, where bright and dim cells would be segmented unequally, we isolate individual cell masks, run a 3D tophat filter to increase contast, and calculate cell-specific threshold values. 
 
-<img src="https://github.com/zacswider/README_Images/blob/main/spindle_mask_1.gif" width="500">
+<img src="https://github.com/zacswider/README_Images/blob/main/spindle_thresh.gif" width="500">
 
+Similar to our approach to cell segmentations, we can filter the non-specific regions with a random forest classifier trained to recognize spindle shapes.
 
+###  Measuring cell properties
+
+Given isolated masks, we can easily measure 3D label properties with built-in python libraries like [scikit-image](https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops), or take custom approaches like in the example below. Here we use principle component analysis to quantify interesting metrics like the degree of alignment between the long axis of the spindle and the long axis of the cell.
+
+<img src="https://github.com/zacswider/README_Images/blob/main/mask_alignment.gif" width="500">
+
+Please check back soon, I am in the process of updating this repository.
 
 
 
