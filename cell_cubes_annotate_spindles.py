@@ -48,7 +48,7 @@ if __name__ == '__main__':
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     cube_paths = [] 
-    subdirs = [s for s in os.listdir(main_dir) if not s.startswith('.') and not 'label_properties' in s]
+    subdirs = [s for s in os.listdir(main_dir) if not s.startswith('.') and not 'label' in s and not 'processed' in s]
     for subdir in subdirs:
         cell_nums = [s for s in os.listdir(os.path.join(main_dir, subdir)) if not s.startswith('.')]
         for cell_num in cell_nums:
