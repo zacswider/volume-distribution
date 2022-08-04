@@ -4,7 +4,7 @@
 
 ### Upstream processing
 
-The images from this project were segmented in three dimensions using a custom [Cellpose](https://github.com/mouseland/cellpose) model trained with ground-truth annotations of XY, XZ, and YZ slices from 3D datasets:
+The images from this project were acquired at low resolution on an Olympuc Fv1000 confocal, denoised using Noise2Void, and segmented in three dimensions using a custom [Cellpose](https://github.com/mouseland/cellpose) model trained with ground-truth annotations of XY, XZ, and YZ slices from 3D datasets:
 
 <img src="https://github.com/zacswider/README_Images/blob/main/cellpose_XY_combined.png" width="500">
 
