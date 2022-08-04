@@ -1,49 +1,60 @@
 # Volume Distribution
 
-#### This repository contains a collection of packages and pipelines for viewing and fully automating the volumetric segmentations of *X. laevis* embryos. For this project I was specifically interested in quantifying the spatial location of the mitotic spindle within the cell volume as well as its alignment with the long axis of the cell. This readme describes some of the methods that I used to a) segment 3D cell volumes, b) filter poor quality segmentations, and c) measure the spatial properties of the cell and spindle.
+#### This repository contains a collection of packages and pipelines for viewing and fully automating the volumetric segmentations of *X. laevis* embryos. For this project I was specifically interested in quantifying the spatial location and orientation of the mitotic spindle with respect to the cell volume and orientation. This readme describes some of the methods that I used to a) segment 3D cell volumes, b) filter poor quality segmentations, and c) measure the spatial properties of the cell and spindle.
 
 ### Upstream processing
 
-The images from this project were acquired at low resolution on an Olympuc Fv1000 confocal, denoised using Noise2Void, and segmented in three dimensions using a custom [Cellpose](https://github.com/mouseland/cellpose) model trained with ground-truth annotations of XY, XZ, and YZ slices from 3D datasets:
+The images from this project were acquired at low resolution on an Olympus Fv1000 confocal, denoised using Noise2Void, and segmented in three dimensions using a custom [Cellpose](https://github.com/mouseland/cellpose) model trained with ground-truth annotations of XY, XZ, and YZ slices from 3D datasets.
 
-<img src="https://github.com/zacswider/README_Images/blob/main/cellpose_XY_combined.png" width="500">
+###### The image below shows a raw XY slice on the left with human annotated cells on the right: 
+<img src="https://github.com/zacswider/README_Images/blob/main/cellpose_XY_combined.png" width="650">
+
+###### The image below shows a 3D projection of PI and anti-tubulin staining on the left and the cellpose-calculated cell labels on the right: 
+<img src="https://github.com/zacswider/README_Images/blob/main/napari_cube_combined-small.png" width="800">
 
 ### Quality control
 
-Convolutional neural networks like cellpose can be trained to *very* high accuracy. However, 3D segmentation is especially challenging, especial for data like these, where the Z resolution is ~15x lower than the XY resolution.
+3D segmentation is challenging, especial for data like these where the Z resolution is ~15x lower than the XY resolution. Given this limitation, segmentations can be imperfect and should be checked for accuracy. However, manual correction is low-throughput and inappropriate for large datasets (imagine hundreds or thousands of stacks). To safeguard against inappropriate segmentations we can implement low effort filters like minimum and maximum segmentation sizes that encompass the expected distribution of our cells. But what about labels that are within the right size range (such as the one below) but completely inaccurate? 
 
-<img src="https://github.com/zacswider/README_Images/blob/main/embryo_orthoviews.png" width="500">
-
-Given this limitation, segmentations can be imperfect and should be checked for accuracy. However, manual correction is low-throughput and inappropriate for large datasets (imagine hundreds or thousands of stacks). To safeguard against inappropriate segmentations we can implement low effort filters like minimum and maximum segmentation sizes that encompass the expected distribution of our cells. But what about labels that are within the right size range, but look like this? (spoiler, this is a *bad* segmentation) 
-
+###### This image below shows a mask that passes the size filters, but completely fails the accuracy filter
 <img src="https://github.com/zacswider/README_Images/blob/main/example_bad_seg.png" width="500">
 
-To eliminate appropriately sized but inappropriately shaped labels we can take a more sophisticated filtering approach, like training a random forest classifier to discriminate between "good" and "bad" segmentations. Here I use the n-dimensional viewer [napari](https://napari.org/stable/) to quickly scrub through cell segmentations which can easily be classified as "good" or "bad" with a key press. Once the ground truth class has been specified, the spatial properties of the label (e.g., long/short axis length and label density/solidity) are used to train the classifier. 
+To eliminate appropriately sized but inappropriately shaped labels we can take a slightly slower but more sophisticated filtering approach. Here I train a random forest classifier to discriminate between good and bad segmentations. The classifier learns uses the 3 dimensional properties (size, shape, density, etc) of labels with known classes (good or bad) to decide whether new labels are either good or bad. Generating training data for a random classifier is made easy with open source tools like [napari](https://napari.org/stable/), a multi-dimensional image viewer that can be paired with 3D measurement tools like [scikit-image](https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops) and machine learning libraries like [scikit-learn](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestClassifier.html). 
 
-<img src="https://github.com/zacswider/README_Images/blob/main/training_rf_model.gif" width="500">
+###### In the example below I use napari to to quickly scrub through cell segmentations which can be classified as "good" or "bad" with a key press. Once the class has been specified, the spatial properties of the label (e.g., long/short axis length and label density/solidity) are measured and used to train the classifier. 
+<img src="https://github.com/zacswider/README_Images/blob/main/test_rf_downsample_gifski_xsmall.gif" width="500">
 
-After filtering, we are left with only cell shapes that match the data we used to train the classifier . Since I'm only interested in these relatively small epithelial cells, I trained the classifier against everything else.
+After filtering, we are left with only cell shapes that match the data we used to train the classifier . Since I'm only interested in these relatively small epithelial cells, I trained the classifier against everything else. 
 
-<img src="https://github.com/zacswider/README_Images/blob/main/rotating_masks.gif" width="500">
+###### The example below shows filtered labeled on the right, and the corresponding masked immunofluorescence on the left
+<img src="https://github.com/zacswider/README_Images/blob/main/rotating_masks_small.gif" width="500">
 
 ### Isolating spindles
 
 In principle, we could also train a segmentation model to specifically threshold spindle shapes, but in this case classic thresholding worked well. In order to avoid applying a blanket threshold value to the entire image, where bright and dim cells would be segmented unequally, we isolate individual cell masks, run a 3D tophat filter to increase contast, and calculate cell-specific threshold values. 
 
-<img src="https://github.com/zacswider/README_Images/blob/main/spindle_thresh.gif" width="500">
+###### The example below shows raw anti-tubulin immunofluorescence and the correponding thresholded regions.
+<img src="https://github.com/zacswider/README_Images/blob/main/spindle_thresh_small.gif" width="500">
 
-Similar to our approach to cell segmentations, we can filter the non-specific regions with a random forest classifier trained to recognize spindle shapes.
+Similar to our approach to cell segmentations, we end up with a mix of accurate and inaccurate segmentations. Once again, we can filter the non-specific regions with a random forest classifier trained to recognize spindle shapes.
+
+
+###### Below left: all labels following thresholding and connected component labeling. Below right: all labels after filtering with a random forest classifier trained to recognize spindle shapes.
+<img src="https://github.com/zacswider/README_Images/blob/main/spindle_rf_filtering_3panel.png" width="1000">
+
 
 ###  Measuring cell properties
 
-Given isolated masks, we can easily measure 3D label properties with built-in python libraries like [scikit-image](https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops), or take custom approaches like in the example below. Here we use principle component analysis to quantify interesting metrics like the degree of alignment between the long axis of the spindle and the long axis of the cell.
+Given isolated masks, we can easily measure 3D label properties with built-in python libraries like [scikit-image](https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops), or take custom approaches like in the example below. 
 
-<img src="https://github.com/zacswider/README_Images/blob/main/mask_alignment.gif" width="500">
+###### Here we use principle component analysis to quantify interesting metrics like the degree of alignment between the long axis of the spindle and the long axis of the cell.
+<img src="https://github.com/zacswider/README_Images/blob/main/spindle_mask_xsmall.gif" width="500">
 
-Please check back soon, I am in the process of updating this repository.
+Proof of principle: automated analysis of 200 cells from 7 different embryos reveals that mitotic spindles follow [Hertwig's Rule](https://en.wikipedia.org/wiki/Hertwig_rule) and align perpendicular to the short axis of the cell. Spindles that don't follow this rule tend to be found in cells with a small aspect ratio (i.e., more spherical cells), where pressure to align is not as strong. 
 
+###### On average, mitotic spindles in the _X. laevis_ epithelium tend to align perpendicular to the short axis of the cell. This trend is strongest when cell shape deviates from spherical.
 
-
+<img src="https://github.com/zacswider/README_Images/blob/main/hetwigplots.png" width="500">
 
 
 
