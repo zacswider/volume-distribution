@@ -24,6 +24,15 @@ def remove_large_objects(labels_array: np.ndarray, max_size: int) -> np.ndarray:
     out[too_big_mask] = 0
     return out
 
+def find_vector(pt1,pt2):
+    ''' 
+    Calculate the vector between two points
+    '''
+    vect = [0 for c in pt1]
+    for dim, coord in enumerate(pt1):
+        deltacoord = pt2[dim]-coord
+        vect[dim] = deltacoord
+    return np.array(vect)
 
 class EmbryoSeg():
     def __init__(self, path_to_data: str, 
@@ -190,6 +199,12 @@ class EmbryoSeg():
                 if len(curr_remaining_labels) == 0:
                     pbar.update(1)
                     continue
+                if len(curr_remaining_labels) > 1:
+                    curr_tub_labels = morphology.remove_small_objects(curr_tub_labels, min_size=self.min_spind_size, connectivity=1)
+                    curr_tub_labels = remove_large_objects(curr_tub_labels, self.max_spind_size)
+                    curr_remaining_labels = [i for i in np.unique(curr_tub_labels) if not i == 0]
+                    if len(curr_remaining_labels) == 0:
+                        return
                 tub_label_props = regionprops_table(curr_tub_labels, cache = True, properties=('area',
                                                                                                 'axis_major_length',
                                                                                                 'axis_minor_length',
