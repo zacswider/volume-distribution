@@ -14,7 +14,7 @@ to predict whether a given segmentation is or is not a spindle.
 if __name__ == '__main__':
 
     # path to training data
-    training_data_path = '/Volumes/bigData/wholeMount_volDist/220712_Fix_Emb_Flvw_Chn1GAP_PI_aTub647_Processed/N2V_Denoised/0_Analysis_01/0_data_cubes2/label_properties'
+    training_data_path = '/Volumes/bigData/wholeMount_volDist/220712_Fix_Emb_Flvw_Chn1GAP_PI_aTub647_Processed/N2V_Denoised/0_Analysis_01/0_data_cubes_TopHat-DoG_mask_otsu/label_properties'
     csv_file_names = [f for f in os.listdir(training_data_path) if f.endswith('.csv') and not f.startswith('.')]
     csv_file_paths = [os.path.join(training_data_path, f) for f in csv_file_names]
 
@@ -28,12 +28,13 @@ if __name__ == '__main__':
     # merge all data into one dataframe
     df = pd.DataFrame(training_data_concat)
         
+
     # define the properties and classes
-    X = df.iloc[:,0:5].values
-    y = df.iloc[:,5].values
+    X = df.iloc[:,0:7].values
+    y = df.iloc[:,7].values
 
     # split into training and test sets
-    X_train, X_test, Y_train, Y_test = train_test_split(X, y, test_size=0.5, random_state=0)
+    X_train, X_test, Y_train, Y_test = train_test_split(X, y, test_size=0.05, random_state=0)
 
     # define and train the classifier
     classifier = RandomForestClassifier(n_estimators=100)
@@ -44,5 +45,6 @@ if __name__ == '__main__':
     print(classification_report(Y_test, y_pred))
     print(confusion_matrix(Y_test, y_pred))
 
-    joblib.dump(classifier, os.path.join(sys.path[0], 'spindle_classifier.joblib'))
+    joblib.dump(classifier, os.path.join(sys.path[0], 'spindle_classifier_3classes.joblib'))
+
 
