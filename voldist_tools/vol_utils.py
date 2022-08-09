@@ -109,6 +109,7 @@ class EmbryoSeg():
         cell_labels_before_rf = [l for l in np.unique(filt_masks) if l != 0]
         cell_classifier_path = self.parent_dir / ('classifiers/cell_classifier.joblib')
         cell_classifier = joblib.load(cell_classifier_path)
+        print('Using RF to filter remaining bad masks')
         with tqdm(total = len(cell_labels_before_rf)) as pbar:
             pbar.set_description('Using RF to filter remaining bad masks')
             for cell_label in cell_labels_before_rf:
