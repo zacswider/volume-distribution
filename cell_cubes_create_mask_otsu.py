@@ -8,6 +8,7 @@ from tifffile import imread, imwrite
 from skimage.filters import threshold_otsu
 from skimage.morphology import binary_erosion
 from skimage.segmentation import clear_border
+from skimage.morphology import white_tophat
 from voldist_tools.basictools import wipe_layers, remove_large_objects, return_points, find_label_density, get_cube, apply_cube,get_long_axis
 
 '''
@@ -33,14 +34,14 @@ if __name__ == '__main__':
     viewer = napari.Viewer()
 
     analysis_dir = '/Volumes/bigData/wholeMount_volDist/220712_Fix_Emb_Flvw_Chn1GAP_PI_aTub647_Processed/N2V_Denoised/0_Analysis_01'
-    subdirs = [d for d in os.listdir(analysis_dir) if os.path.isdir(os.path.join(analysis_dir, d))]
+    subdirs = [d for d in os.listdir(analysis_dir) if os.path.isdir(os.path.join(analysis_dir, d)) and 'Exp' in d or 'Cntrl' in d]
 
     # load shared filters:
     shared_filters_text = np.loadtxt(os.path.join(sys.path[0], 'shared_filters.txt'), delimiter=',', dtype=str).tolist()
     shared_filters = {k: float(v) for k, v in shared_filters_text}
 
     # create save directory
-    data_save_dir = os.path.join(analysis_dir, '0_data_cubes')
+    data_save_dir = os.path.join(analysis_dir, '0_data_cubes_TopHat-DoG_mask_otsu')
     if not os.path.exists(data_save_dir):
         os.mkdir(data_save_dir)
 
@@ -60,9 +61,10 @@ if __name__ == '__main__':
 
         data_load_dir = os.path.join(analysis_dir, subdir)
         masks = np.load(os.path.join(data_load_dir, segmentations_name), allow_pickle=True).item()['masks']
-        tub = imread(os.path.join(data_load_dir, dog_tub_name))
+        tub_dog = imread(os.path.join(data_load_dir, dog_tub_name))
         tub_raw = imread(os.path.join(data_load_dir, raw_tub_name))
         pi = imread(os.path.join(data_load_dir, pi_name))
+        tub_dog_th = white_tophat(tub_dog, footprint=morphology.ball(5))
 
         # coarsly filter the masks of poor segmentations
         minimum_size = shared_filters['minimum_size']
@@ -84,7 +86,7 @@ if __name__ == '__main__':
             # get the coordinate of the bounding cube for the current mask ID. Apply it to the labels and images
             cube_dims = get_cube(filtered_masks, curr_mask_id)
             cubed_label = apply_cube(curr_mask, cube_dims)
-            cubed_tub = apply_cube(tub, cube_dims)
+            cubed_tub_dog_th = apply_cube(tub_dog_th, cube_dims)
             cubed_tub_raw = apply_cube(tub_raw, cube_dims)
             cubed_PI = apply_cube(pi, cube_dims)
 
@@ -93,15 +95,10 @@ if __name__ == '__main__':
             cell_centroid = mask_coords.mean(axis=0)
             cell_long_vect, cell_long_line = get_long_axis(cubed_label)
 
-            # erode the mask to eliminate some cortical signal
-            eroded_mask = binary_erosion(cubed_label, footprint=np.ones((3, 3, 3)))
-            for i in range(10):
-                eroded_mask = binary_erosion(eroded_mask)
-
             # get the tubulin signal from the remaining region and define an Otsu threshold
             remaining_tub = np.zeros(shape=cubed_label.shape)
-            remaining_tub[eroded_mask] = cubed_tub[eroded_mask]
-            remaining_vals = cubed_tub[eroded_mask].ravel()
+            remaining_tub[cubed_label] = cubed_tub_dog_th[cubed_label]
+            remaining_vals = cubed_tub_dog_th[cubed_label].ravel()
             thresh_val = threshold_otsu(remaining_vals)
             thresh_mask = morphology.label(remaining_tub > thresh_val)
 
@@ -114,10 +111,11 @@ if __name__ == '__main__':
             # filter and labels smaller than the mimum and maximum expected label sizes
             min_thrsh_size = shared_filters['min_thrsh_size']
             max_thrsh_size = shared_filters['max_thrsh_size']
+            '''
             if len(num_tub_labels_b4_filter) > 1:
                 thresh_mask = morphology.remove_small_objects(thresh_mask, min_size=min_thrsh_size, connectivity=1)
                 thresh_mask = remove_large_objects(thresh_mask, max_size=max_thrsh_size)
-
+            '''
             # get the number of labels after filtering
             remaining_labels = [label for label in np.unique(thresh_mask) if label != 0]
 
@@ -130,18 +128,16 @@ if __name__ == '__main__':
                 os.mkdir(mask_save_dir)
 
             # populate the viewer 
-            viewer.add_labels(eroded_mask, name='eroded_mask', blending='additive', visible=False)
             viewer.add_labels(cubed_label, name='curr_mask_cube', blending='additive')
-            viewer.add_image(cubed_tub, name='curr_tub_cube', blending='additive', visible=False)
+            viewer.add_image(cubed_tub_dog_th, name='cubed_tub_dog_th', blending='additive', visible=False)
             viewer.add_image(cubed_tub_raw, name='curr_tub_raw_cube', blending='additive', visible=False)
             viewer.add_image(cubed_PI, name='curr_PI_cube', blending='additive', visible=False)
             viewer.add_labels(thresh_mask, name='thresh_mask', blending='additive')
 
             images_and_layers = ['curr_mask_cube',
-                                'curr_tub_cube',
+                                'cubed_tub_dog_th',
                                 'curr_tub_raw_cube',
                                 'curr_PI_cube',
-                                'eroded_mask',
                                 'thresh_mask']
 
             # save the tif compatible layers as tifs

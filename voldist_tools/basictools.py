@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from scipy import spatial
 from tifffile import imread
+from skimage.morphology import remove_small_objects
 from skimage.measure import regionprops_table
 
 def wipe_layers(viewer_name) -> None:
@@ -193,16 +194,21 @@ def open_with_napari(file_path: str, viewer_name, view_pi = False) -> None:
     '''
     wipe_layers(viewer_name)
     cell_mask_path = os.path.join(file_path, 'curr_mask_cube.tif')
-    tub_path = os.path.join(file_path, 'curr_tub_cube.tif')
+    tub_path = os.path.join(file_path, 'cubed_tub_dog_th.tif')
     labels_path = os.path.join(file_path, 'thresh_mask.tif')
     pi_path = os.path.join(file_path, 'curr_PI_cube.tif')
     if view_pi:
         viewer_name.add_labels(imread(cell_mask_path), name = 'cell mask', blending='additive', opacity = 0.125)
-        viewer_name.add_image(imread(pi_path), name = 'PO', blending='additive')
+        viewer_name.add_image(imread(pi_path), name = 'PI', blending='additive')
     else:
+        all_labels = imread(labels_path)
+        all_labels = remove_small_objects(all_labels, min_size=200)
+        all_labels = remove_large_objects(all_labels, max_size=5000)
+        
         viewer_name.add_labels(imread(cell_mask_path), name = 'cell mask', blending='additive', opacity = 0.25)
         viewer_name.add_image(imread(tub_path), name = 'tub', blending='additive')
-        viewer_name.add_labels(imread(labels_path), name = 'labels', blending='additive', opacity = 0.75)
+        viewer_name.add_image(imread(pi_path), name = 'PI', blending='additive', visible = False)
+        viewer_name.add_labels(all_labels, name = 'labels', blending='additive', opacity = 0.75)
 
 def calculate_label_properties(napari_viewer_name) -> pd.DataFrame:
     '''
@@ -227,10 +233,11 @@ def calculate_label_properties(napari_viewer_name) -> pd.DataFrame:
     label_nums = [l for l in np.unique(all_labels) if l != 0]
     if len(label_nums) == 0:
         return [], None
-
-    props = regionprops_table(all_labels, properties=('area',
+    props = regionprops_table(all_labels, cache = True, properties=('area',
                                                       'axis_major_length',
                                                       'axis_minor_length',
+                                                      'solidity',
+                                                      'extent',
                                                       'label'))
     props_df = pd.DataFrame(props)
 
@@ -239,8 +246,8 @@ def calculate_label_properties(napari_viewer_name) -> pd.DataFrame:
         label_centroid = label_coords.mean(axis=0)
         dist = spatial.distance.euclidean(cell_centroid, label_centroid)
         props_df.loc[props_df['label'] == label_num, 'dist_to_cell'] = dist
-        label_density = find_label_density(label_coords)
-        props_df.loc[props_df['label'] == label_num, 'density'] = label_density
+    
+    props_df['aspect_ratio'] = props_df['axis_major_length'] / props_df['axis_minor_length']
     
     return label_nums, props_df
 
@@ -266,7 +273,30 @@ def calculate_cell_properties(napari_viewer_name) -> pd.DataFrame:
     
     return cell_mask_props_df
 
-
+def multiDimenDist(point1,point2):
+   #find the difference between the two points, its really the same as below
+   deltaVals = [point2[dimension]-point1[dimension] for dimension in range(len(point1))]
+   runningSquared = 0
+   #because the pythagarom theorm works for any dimension we can just use that
+   for coOrd in deltaVals:
+       runningSquared += coOrd**2
+   return runningSquared**(1/2)
+def findVec(point1,point2,unitSphere = False):
+  #setting unitSphere to True will make the vector scaled down to a sphere with a radius one, instead of it's orginal length
+  finalVector = [0 for coOrd in point1]
+  for dimension, coOrd in enumerate(point1):
+      #finding total differnce for that co-ordinate(x,y,z...)
+      deltaCoOrd = point2[dimension]-coOrd
+      #adding total difference
+      finalVector[dimension] = deltaCoOrd
+  if unitSphere:
+      totalDist = multiDimenDist(point1,point2)
+      unitVector =[]
+      for dimen in finalVector:
+          unitVector.append( dimen/totalDist)
+      return unitVector
+  else:
+      return np.array(finalVector)
 
 
 
