@@ -1,3 +1,4 @@
+from genericpath import isfile
 import os
 import vg
 import numpy as np
@@ -11,7 +12,9 @@ from tqdm import tqdm
 import pandas as pd
 from tifffile import imread, imwrite
 from scipy import spatial
-
+import time
+import napari
+np.seterr(invalid='ignore')
 
 def remove_large_objects(labels_array: np.ndarray, max_size: int) -> np.ndarray:
     ''' 
@@ -83,12 +86,19 @@ class EmbryoSeg():
         self.filt_mask_save = self.vect_save_path / (self.embryo_name + '_filtered_cell_masks.tif')
         self.spind_mask_save = self.vect_save_path / (self.embryo_name + '_filtered_spindle_masks.tif')
         self.whitetophat_save = self.vect_save_path / (self.embryo_name + f'_tub_whitetophat_{self.wthball}.tif')
+        self.properties_save = self.vect_save_path / (self.embryo_name + '_properties.csv')
         
-
-    def find_emb_centroid(self, overwrite = False):
+    def find_emb_centroid(self, overwrite = False) -> np.ndarray:
         '''
         Load the Cellpose segmentation file and find the centroid of all masked regions (essentially, the centroid of the embryo).
         Save the centroid coordinates as a .txt file
+        Parameters
+        ----------
+        overwrite : bool whether to overwrite previously calculated properties file
+
+        Returns
+        -------
+        self.emb_centroid : numpy array specifying the embryo centroid
         '''
         
         if os.path.isfile(self.emb_cent_save) and not overwrite:
@@ -100,8 +110,18 @@ class EmbryoSeg():
             np.savetxt(self.emb_cent_save, self.emb_centroid)
         return self.emb_centroid
         
-    def filter_cell_labels(self, overwrite = False):
+    def filter_cell_labels(self, overwrite = False) -> np.ndarray:
+        '''
+        Filters the cell labels with size thresholds and random forest classifier trained
+        to recognize cell shapes.
+        Parameters
+        ----------
+        overwrite : bool whether to overwrite previously calculated properties file
 
+        Returns
+        -------
+        self.filtered_cell_masks : numpy array of filtered cell masks
+        '''
         if os.path.isfile(self.filt_mask_save) and not overwrite:
             self.filtered_cell_masks = imread(self.filt_mask_save)
             return self.filtered_cell_masks
@@ -140,7 +160,19 @@ class EmbryoSeg():
         
         return self.filtered_cell_masks
 
-    def filter_spindle_labels(self, overwrite = False):
+    def filter_spindle_labels(self, overwrite = False) -> np.ndarray:
+        '''
+        Calculates a cell-specific otsu threshold for the DoG and white tophat filtered tubulin arrays,
+        then filters the corresponding labels with size thresholds and random forest classifier trained
+        to recognize spindle shapes.
+                Parameters
+        ----------
+        overwrite : bool whether to overwrite previously calculated properties file
+
+        Returns
+        -------
+        self.filtered_spindle_masks : numpy array of filtered spindle masks
+        '''
         
         # check for pre-existing filtered spindle labels array
         if os.path.isfile(self.spind_mask_save) and not overwrite:
@@ -242,7 +274,24 @@ class EmbryoSeg():
         imwrite(self.spind_mask_save, self.filtered_tub_masks)
         return self.filtered_tub_masks
         
-    def calculate_properties(self):
+    def calculate_properties(self, overwrite = False) -> pd.DataFrame:
+        '''
+        Uses the previously filtered spindle and cell masks to calculate individual properties (shape, size, etc.) 
+        as well as geometric properties (orientation of y relative to x, etc.) for each cell.
+        Parameters
+        ----------
+        overwrite : bool whether to overwrite previously calculated properties file
+
+        Returns
+        -------
+        self.embryo_properties pandas.DataFrame with properties for each cell
+        '''
+
+        if os.path.isfile(self.properties_save) and not overwrite:
+            print('previously calculated properties found. Loading now.')
+            self.embryo_properties = pd.read_csv(self.properties_save)
+            print('finished loading properties file. ')
+            return self.embryo_properties
 
         # load embryo centroid
         if not os.path.isfile(self.emb_cent_save):
@@ -274,61 +323,268 @@ class EmbryoSeg():
             self.filtered_tub_masks = imread(self.spind_mask_save)
             print('finished loading spindle masks')
 
-        ''' 
-        Iterate through the cell labels: -----
-        1) calculate the cell properties: -----
-            a) the region props defaults    -----
-            b) the centroid location        -----
-            c) distance from cell to embryo centroid    -----
-            d) The pc0, pc1, pc2 vectors    -----
-            e) the vector from embryo centroid to cell centroid (v0)
-            f) the angle between pc0 and v0
-            g) the angle between pc2 and v0
-        2) add the distance, and the two angles to the properties dictionary  
-        3) save the pco, pc1, and pc2 vectors and centroid as <group>_E<num>_cell_pcs and <group>_E<num>_cell_centroid
-        4) see if there is a spindle mask within the cell
-        5) if so:
-            a) calculate the region props defaults
-            b) calculate the distance from the cell to spindle centroid
-            c) calculate the pc0, pc1, and pc2 vectors
-            d) add the distance to the region properties dict
-            e) save the pco, pc1, and pc2 vectors as <group>_E<num>_spindle_pcs
-        6) if not, continue to the next cell
-        '''
+        embryo_props = []
 
         cell_label_nums = [i for i in np.unique(self.filtered_cell_masks) if not i == 0]
-        for cell_label in cell_label_nums:
+        
+        for cell_label in tqdm(cell_label_nums):
+            print(f'calculating properties for cell {cell_label}')
+
             cell_mask = self.filtered_cell_masks == cell_label
-            cell_mask_props = regionprops_table(cell_mask.astype(np.uint8), cache=True, properties=('area',
-                                                                                                    'axis_major_length',
-                                                                                                    'axis_minor_length',
-                                                                                                    'solidity',
-                                                                                                    'extent'
-                                                                                                    ))
+            
+            d1 = regionprops_table(cell_mask.astype(np.uint8), cache=True, properties=('area',
+                                                                                      'axis_major_length',
+                                                                                      'axis_minor_length',
+                                                                                      'solidity',
+                                                                                      'extent'
+                                                                                      ))
+            # annotate column names 
+            cell_mask_props = {}
+            for k, v in d1.items():
+                cell_mask_props[f'cell_{k}'] = v[0]
+                                                                                                
+            def get_principle_components(mask: np.ndarray):
+                # get the principle components of the mask. downsample if there are too many points
+                coords = np.column_stack(np.where(mask))
+                if coords.shape[0] > 1000:
+                    ds_val = int(coords.shape[0] / 1000)
+                    np.random.shuffle(coords)
+                    coords = coords[::ds_val]
+                    
+                centroid = np.mean(coords, axis=0) 
+                pc0, pc1, pc2 = vg.principal_components(coords)
+                return centroid, pc0, pc1, pc2
+            
+            cell_centroid, cell_pc0, cell_pc1, cell_pc2 = get_principle_components(cell_mask)
+            
+            # calculate the geometric orientation of the cell relative the embryo centroid
+            def get_angle(v1, v2): return np.min([np.abs(0 - vg.angle(v1, v2)), np.abs(180 - vg.angle(v1, v2))])
+            v0 = find_vector(self.emb_centroid, cell_centroid)
+            v0_pc0 = get_angle(v0, cell_pc0)
+            v0_pc1 = get_angle(v0, cell_pc1)
+            v0_pc2 = get_angle(v0, cell_pc2)
 
-            # get the principle components of the cell mask. downsample if there are too many points
-            cell_coords = np.column_stack(np.where(cell_mask))
-            if cell_coords.shape[0] > 1000:
-                ds_val = int(cell_coords.shape[0] / 1000)
-                np.random.shuffle(cell_coords)
-                cell_mask_coords_ds = cell_coords[::ds_val]
-            cell_centroid = np.mean(cell_mask_coords_ds, axis=0)
-            cell_pc0, cell_pc1, cell_pc2 = vg.principal_components(cell_mask_coords_ds)
-
+            # saving...
             np.savetxt(self.vect_save_path / (self.embryo_name + f'_cell{cell_label}_centroid.txt'), cell_centroid)
             np.savetxt(self.vect_save_path / (self.embryo_name + f'_cell{cell_label}_pc0.txt'), cell_pc0)
             np.savetxt(self.vect_save_path / (self.embryo_name + f'_cell{cell_label}_pc1.txt'), cell_pc1)
             np.savetxt(self.vect_save_path / (self.embryo_name + f'_cell{cell_label}_pc2.txt'), cell_pc2)
+            np.savetxt(self.vect_save_path / (self.embryo_name + f'_cell{cell_label}_v0.txt'), v0)
 
-            '''
-            Up above also calculate the vector from the cell centroid to the embryo centroid and save to txt
-            '''
-
-
-            '''
-            Down below also add the angle between cell axes and v0
-            '''
             cell_mask_props['cell_to_emb_dist'] = spatial.distance.euclidean(self.emb_centroid, cell_centroid)
+            cell_mask_props['cell_to_emb_pc0_angle'] = v0_pc0
+            cell_mask_props['cell_to_emb_pc1_angle'] = v0_pc1
+            cell_mask_props['cell_to_emb_pc2_angle'] = v0_pc2
+
+            # see if there is a spindle mask within the cell
+            spindle_labels_found = [i for i in np.unique(self.filtered_tub_masks[cell_mask]) if not i== 0]
+            if not len(spindle_labels_found) == 1:
+                embryo_props.append(cell_mask_props)
+                continue
+
+            print('spindle found')
+            spindle_label = spindle_labels_found[0]
+            spindle_mask = self.filtered_tub_masks == spindle_label
+            cell_mask_props['has_spindle'] = True
+            d2 = regionprops_table(spindle_mask.astype(np.uint8), cache = True, properties=('area',
+                                                                                            'axis_major_length',
+                                                                                            'axis_minor_length',
+                                                                                            'solidity',
+                                                                                            'extent',
+                                                                                            'label'
+                                                                                            ))
+            # annotate column names
+            for k, v in d2.items():
+                cell_mask_props[f'spindle_{k}'] = v[0]
+            
+            spindle_centroid, spindle_pc0, spindle_pc1, spindle_pc2 = get_principle_components(spindle_mask)
+
+            # calculate the geometric orientation of the spindle relative the cell centroid
+            cell_pc0_to_spindle_pc0 = get_angle(cell_pc0, spindle_pc0)
+            cell_pc2_to_spindle_pc0 = get_angle(cell_pc2, spindle_pc0)
+
+            np.savetxt(self.vect_save_path / (self.embryo_name + f'_cell{cell_label}_spindle_centroid.txt'), spindle_centroid)
+            np.savetxt(self.vect_save_path / (self.embryo_name + f'_cell{cell_label}_spindle_pc0.txt'), spindle_pc0)
+
+            cell_mask_props['cell_to_spindle_dist'] = spatial.distance.euclidean(cell_centroid, spindle_centroid)
+            cell_mask_props['cell_to_spindle_pc0_angle'] = cell_pc0_to_spindle_pc0
+            cell_mask_props['cell_to_spindle_pc2_angle'] = cell_pc2_to_spindle_pc0
+
+            embryo_props.append(cell_mask_props)
+        
+        self.embryo_properties = pd.DataFrame(embryo_props)
+        self.embryo_properties.to_csv(self.vect_save_path / (self.embryo_name + '_properties.csv'))
+        return self.embryo_properties
+
+    def interact(self, show_curr_cell = False, cell_opacity = 0.35, spindle_opacity = 0.35):
+        '''
+        Open a napari viewer to interactively visualize the position of the cell and spindle 
+        in the context of the whole embryo..
+        Parameters
+        ----------
+        show_curr_cell : bool whether to highlight the current cell in viewer (time cost ~3 seconds)
+        cell_opacity : float the opacity of the cell masks in the viewer
+        spindle_opacity : float the opacity of the spindle masks in the viewer
+        '''
+
+        def line_from_vect(v, c, length = 50):
+            '''
+            return a line given a vector v and centroid c
+            '''
+            v_points = v * np.mgrid[-length:length:2j][:, np.newaxis]
+            v_points += c
+            return v_points
+
+        if not any([os.path.isfile(f) for f in [self.segmentation_path,
+                                                self.filt_mask_save,
+                                                self.spind_mask_save]]):
+            print('One or more segmentations file not found. Run calculate_properties() first.')
+
+        viewer = napari.Viewer(title = 'Click a mask to see its contents', ndisplay = 3)
+
+        print('loading filtered cell masks...')
+        filtered_cell_masks = imread(self.filt_mask_save).astype('uint16')
+        print('loading filtered spindle masks...')
+        filtered_tub_masks = imread(self.spind_mask_save).astype('uint16')
+        print('loading embryo centroid...')
+        embryo_centroid = np.loadtxt(self.emb_cent_save)
+        print('opening viewer...')
+        layer = viewer.add_labels(filtered_cell_masks, name ='filtered cell masks', blending='additive', opacity=cell_opacity)
+        viewer.add_labels(filtered_tub_masks, name ='filtered spindle masks', blending='additive', opacity=spindle_opacity)
+        viewer.add_points(embryo_centroid, name ='embryo centroid', blending = 'additive', size = 5)
+    
+        # calculating label numbers from files is much faster than calculating from the image
+        def get_label_numbers(mystring: str): return mystring.split('_')[2].split('cell')[-1]
+        file_names = [f for f in os.listdir(self.vect_save_path) if not f.startswith('.') and f.endswith('.txt')]
+        nums = [int(i) for i in map(get_label_numbers, file_names) if i.isnumeric()]
+        unique_labels = np.unique(nums)
+
+        # fake a call to unique labels so we can just update the layers going forward
+        # NOTE updating shapes in 3D is currently broken, so we will delete and reassign these shapes instead
+        first_cell = unique_labels[0]
+        print(f'first cell is {first_cell}')
+        cell_centroid = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{first_cell}_centroid.txt'))
+        cell_pc0 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{first_cell}_pc0.txt'))
+        cell_pc1 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{first_cell}_pc1.txt'))
+        cell_pc2 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{first_cell}_pc2.txt'))
+        v0 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{first_cell}_v0.txt'))
+
+        spindle_centroid_path = self.vect_save_path / (self.embryo_name + f'_cell{first_cell}_spindle_centroid.txt')
+        spindle_pc0_path = self.vect_save_path / (self.embryo_name + f'_cell{first_cell}_spindle_pc0.txt')
+        # not all cells have an adequately thresholded spindle within them.
+        if os.path.isfile(spindle_centroid_path) and os.path.isfile(spindle_pc0_path):
+            spindle_centroid = np.loadtxt(spindle_centroid_path)
+            spindle_pc0 = np.loadtxt(spindle_pc0_path)
+            spindle_long = line_from_vect(spindle_pc0, spindle_centroid)
+            viewer.add_shapes(spindle_long, shape_type='line', name='spindle_pc0', edge_color='magenta', opacity=0.35, blending='additive')
+        else:
+            print(f'no spindle found in cell {first_cell}')
+            spindle_long = line_from_vect([0,0,0], [0,0,0])
+            viewer.add_shapes(spindle_long, shape_type='line', name='spindle_pc0', edge_color='magenta', opacity=0.35, blending='additive')
+
+        cell_long = line_from_vect(cell_pc0, cell_centroid)
+        cell_mid = line_from_vect(cell_pc1, cell_centroid)
+        cell_short = line_from_vect(cell_pc2, cell_centroid)
+        
+        central_vec = line_from_vect(v0, embryo_centroid, length = 2)
+        viewer.add_shapes(cell_long, shape_type='line', name='cell_pc0', edge_color='green', opacity=0.35, blending='additive')
+        viewer.add_shapes(cell_mid, shape_type='line', name='cell_pc1', edge_color='blue', opacity=0.35, blending='additive')
+        viewer.add_shapes(cell_short, shape_type='line', name='cell_pc2', edge_color='red', opacity=0.35, blending='additive')
+        viewer.add_shapes(central_vec, shape_type='line', name='v0', edge_color='white', opacity=0.25, blending='additive')
+
+        if show_curr_cell:
+            curr_cell = np.zeros(filtered_cell_masks.shape, dtype='uint16')
+            curr_cell_mask = filtered_cell_masks == first_cell
+            curr_cell[curr_cell_mask] = first_cell
+            curr_cell_layer = viewer.add_labels(curr_cell, name ='curr_cell', blending='additive', opacity=0.55)
+
+        viewer.layers.selection.active = viewer.layers['filtered cell masks']
+
+
+        def load_files(viewer, label_num: str) -> None:
+            '''
+            Given a cell label number, load the corresponding vectors and add them to the viewer.
+            NOTE: creating a "current cell" layer is rate limiting (~2-3 seconds).
+            '''
+            # sanity checks up on input:
+            try:
+                label_num = int(label_num)
+            except ValueError:
+                print('spindle label number must be an integer')
+                return
+
+            # load the data
+            cell_centroid = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{label_num}_centroid.txt'))
+            cell_pc0 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{label_num}_pc0.txt'))
+            cell_pc1 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{label_num}_pc1.txt'))
+            cell_pc2 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{label_num}_pc2.txt'))
+            v0 = np.loadtxt(self.vect_save_path / (self.embryo_name + f'_cell{label_num}_v0.txt'))
+
+            spindle_centroid_path = self.vect_save_path / (self.embryo_name + f'_cell{label_num}_spindle_centroid.txt')
+            spindle_pc0_path = self.vect_save_path / (self.embryo_name + f'_cell{label_num}_spindle_pc0.txt')
+
+            # check for spindles
+            if os.path.isfile(spindle_centroid_path) and os.path.isfile(spindle_pc0_path):
+                spindle_centroid = np.loadtxt(spindle_centroid_path)
+                spindle_pc0 = np.loadtxt(spindle_pc0_path)
+                spindle_long = line_from_vect(spindle_pc0, spindle_centroid)
+                viewer.layers.remove(viewer.layers['spindle_pc0'])
+                viewer.add_shapes(spindle_long, shape_type='line', name='spindle_pc0', edge_color='magenta', opacity=0.35, blending='additive')
+            else:
+                print(f'no spindle found in cell {label_num}')
+                viewer.layers['spindle_pc0'].visible = False
+
+            # create the new lines from new vectors
+            cell_long = line_from_vect(cell_pc0, cell_centroid)
+            cell_mid = line_from_vect(cell_pc1, cell_centroid)
+            cell_short = line_from_vect(cell_pc2, cell_centroid)
+            central_vec = line_from_vect(v0, embryo_centroid, length = 2)
+
+            # updating shapes in 3D is currently broken in napari, so we will delete and reassign
+            viewer.layers.remove(viewer.layers['cell_pc0'])
+            viewer.add_shapes(cell_long, shape_type='line', name='cell_pc0', edge_color='green', opacity=0.35, blending='additive')
+            viewer.layers.remove(viewer.layers['cell_pc1'])
+            viewer.add_shapes(cell_mid, shape_type='line', name='cell_pc1', edge_color='blue', opacity=0.35, blending='additive')
+            viewer.layers.remove(viewer.layers['cell_pc2'])
+            viewer.add_shapes(cell_short, shape_type='line', name='cell_pc2', edge_color='red', opacity=0.35, blending='additive')
+            viewer.layers.remove(viewer.layers['v0'])
+            viewer.add_shapes(central_vec, shape_type='line', name='v0', edge_color='white', opacity=0.25, blending='additive')
+
+            if show_curr_cell:
+                curr_cell = np.zeros(filtered_cell_masks.shape, dtype='uint16')
+                curr_cell_mask = filtered_cell_masks == label_num
+                curr_cell[curr_cell_mask] = label_num
+                curr_cell_layer.data = curr_cell
+
+            viewer.layers.selection.active = viewer.layers['filtered cell masks']
+            print(f'now viewing cell {label_num}')
+
+        @layer.mouse_drag_callbacks.append
+        def update_layer(layer, event):
+            if len(viewer.dims.displayed) == 2:
+                mask_num = layer.get_value(event.position)
+                print(f'clicked on mask {mask_num}')
+                if not mask_num == 0:
+                    load_files(viewer, label_num = mask_num)
+                    print('viewing cell', mask_num)
+                else:
+                    print('click a mask to see its contents')
+    
+        @viewer.bind_key('v')
+        def get_input(viewer):
+            from magicgui.widgets import request_values
+            values = request_values(name=dict(annotation=str, label='spindle label:'))
+            if values == None:
+                print('please enter a value')
+            else:
+                load_files(viewer, label_num = values['name'])
+
+        napari.run()
+
+
+
+
+
 
 
 
