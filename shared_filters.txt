@@ -1,4 +1,0 @@
-min_thrsh_size, 200
-max_thrsh_size, 5000
-minimum_size, 250000
-maximum_size, 1000000
