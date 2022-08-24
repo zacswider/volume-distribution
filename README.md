@@ -1,6 +1,6 @@
 # Volume Distribution
 
-#### This repository contains a collection of packages and pipelines for viewing and fully automating the volumetric segmentations of *X. laevis* embryos. For this project I was specifically interested in quantifying the spatial location and orientation of the mitotic spindle with respect to the cell volume and orientation. This readme describes some of the methods that I used to a) segment 3D cell volumes, b) filter poor quality segmentations, and c) measure the spatial properties of the cell and spindle.
+#### This repository contains a collection of packages and pipelines for viewing and automating the volumetric segmentations of *X. laevis* embryos. For this project I was specifically interested in quantifying the spatial location and orientation of the mitotic spindle with respect to the cell volume and orientation. This readme describes some of the methods that I used to a) segment 3D cell volumes, b) filter poor quality segmentations, and c) measure the spatial properties of the cell and spindle.
 
 ### Upstream processing
 
