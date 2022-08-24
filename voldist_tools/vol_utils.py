@@ -27,6 +27,14 @@ def remove_large_objects(labels_array: np.ndarray, max_size: int) -> np.ndarray:
     out[too_big_mask] = 0
     return out
 
+def wipe_layers(viewer) -> None:
+    '''
+    Delete all layers in the viewer objected
+    '''
+    layers = viewer.layers
+    while len(layers) > 0:
+        layers.remove(layers[0])
+
 def find_vector(pt1,pt2):
     ''' 
     Calculate the vector between two points
@@ -36,6 +44,76 @@ def find_vector(pt1,pt2):
         deltacoord = pt2[dim]-coord
         vect[dim] = deltacoord
     return np.array(vect)
+
+def get_cube(source: np.ndarray, label_num: int) -> np.ndarray:
+    '''
+    Return a cube of the label in a mask
+    ---
+    Parameters:
+    source: np.ndarray the mask containing the label
+    label_num: int the label number of the label you want isolate
+    ---
+    Returns:
+    cube: np.ndarray the cube of the label
+    '''
+    label_points = np.column_stack(np.where(source == label_num))
+    x = label_points.T[0]
+    y = label_points.T[1]
+    z = label_points.T[2]
+    x_min = np.min(x) - 1
+    x_max = np.max(x) + 2
+    y_min = np.min(y) - 1
+    y_max = np.max(y) + 2
+    z_min = np.min(z) - 1
+    z_max = np.max(z) + 2
+    return x_min, x_max, y_min, y_max, z_min, z_max
+
+def apply_cube(source: np.ndarray, cube: tuple) -> np.ndarray:
+    '''
+    Crop an ndArray with a cube
+    ---
+    Parameters:
+    source: np.ndarray the array to crop
+    cube: tuple containing the x_min, x_max, y_min, y_max, z_min, z_max
+    ---
+    Returns:
+    out: np.ndarray array with the cube applied
+    '''
+    x_min, x_max, y_min, y_max, z_min, z_max = cube
+    out = source[x_min:x_max, y_min:y_max, z_min:z_max]
+    return out
+
+def get_principle_components(mask: np.ndarray):
+    '''
+    Returns the centroid and principle components of a boolean mask
+    ---
+    Parameters:
+    mask: np.ndarray boolean mask to get the principle components of
+    ---
+    Returns:
+    centroid: np.ndarray the centroid of the mask
+    pc0: np.ndarray the "long axis" of the max
+    pc1: np.ndarray the "medium axis" of the max
+    pc2: np.ndarray the "short axis" of the max
+    '''
+    # get the principle components of the mask. downsample if there are too many points
+    coords = np.column_stack(np.where(mask))
+    if coords.shape[0] > 1000:
+        ds_val = int(coords.shape[0] / 1000)
+        np.random.shuffle(coords)
+        coords = coords[::ds_val]
+        
+    centroid = np.mean(coords, axis=0) 
+    pc0, pc1, pc2 = vg.principal_components(coords)
+    return centroid, pc0, pc1, pc2
+
+def line_from_vect(v, c, length = 50):
+    '''
+    return a line given a vector v and centroid c
+    '''
+    v_points = v * np.mgrid[-length:length:2j][:, np.newaxis]
+    v_points += c
+    return v_points
 
 class EmbryoSeg():
     def __init__(self, path_to_data: str, 
@@ -338,23 +416,13 @@ class EmbryoSeg():
                                                                                       'solidity',
                                                                                       'extent'
                                                                                       ))
+            
             # annotate column names 
             cell_mask_props = {}
             for k, v in d1.items():
                 cell_mask_props[f'cell_{k}'] = v[0]
+            cell_mask_props['cell_label'] = cell_label
                                                                                                 
-            def get_principle_components(mask: np.ndarray):
-                # get the principle components of the mask. downsample if there are too many points
-                coords = np.column_stack(np.where(mask))
-                if coords.shape[0] > 1000:
-                    ds_val = int(coords.shape[0] / 1000)
-                    np.random.shuffle(coords)
-                    coords = coords[::ds_val]
-                    
-                centroid = np.mean(coords, axis=0) 
-                pc0, pc1, pc2 = vg.principal_components(coords)
-                return centroid, pc0, pc1, pc2
-            
             cell_centroid, cell_pc0, cell_pc1, cell_pc2 = get_principle_components(cell_mask)
             
             # calculate the geometric orientation of the cell relative the embryo centroid
@@ -416,6 +484,80 @@ class EmbryoSeg():
         self.embryo_properties.to_csv(self.vect_save_path / (self.embryo_name + '_properties.csv'))
         return self.embryo_properties
 
+    def manual_annotation(self):
+        ''' 
+        Open a napari view to interactively visualize cropped cubes for each cell. Key binding allows 
+        user to manually specify whether a cell is appropriately thresholded or not.
+        '''
+        
+        viewer = napari.Viewer(title = 'Press "t" to specify trash. Press "n" to proceed to next cube', ndisplay = 3)
+        
+        # calculating label numbers from files is much faster than calculating from the image
+        def get_label_numbers(mystring: str): return mystring.split('_')[2].split('cell')[-1]
+        file_names = [f for f in os.listdir(self.vect_save_path) if not f.startswith('.') and f.endswith('.txt')]
+        nums = [int(i) for i in map(get_label_numbers, file_names) if i.isnumeric()]
+        unique_labels = np.unique(nums).tolist()
+
+        print(f'{self.embryo_name}_cell{unique_labels[0]}_spindle_pc0.txt')
+
+        # only include cell labels with associated spindles
+        labels_with_spindles = [i for i in unique_labels if os.path.isfile(self.vect_save_path / f'{self.embryo_name}_cell{i}_spindle_pc0.txt')]
+
+        # load the arrays
+        print('loading data arrays...')
+        filtered_cell_masks = imread(self.vect_save_path / (self.embryo_name + '_filtered_cell_masks.tif')).astype('uint16')
+        filtered_spind_masks = imread(self.vect_save_path / (self.embryo_name + '_filtered_spindle_masks.tif')).astype('uint16')
+        dog_tub = imread(self.DoG_tub_path)
+        dog_pi = imread(self.DoG_pi_path)
+        print('done loading arrays.')
+
+        # list to store the bad numbers
+        bad_cell_labels = []
+
+        def load_label_cube(viewer, label_num: int) -> None:
+            wipe_layers(viewer)
+            cube_coords = get_cube(filtered_cell_masks, label_num)
+            pi_cube = apply_cube(dog_pi, cube_coords)
+            cell_mask_cube = apply_cube(filtered_cell_masks, cube_coords)
+            tub_cube = apply_cube(dog_tub, cube_coords)
+            spind_mask_cube = apply_cube(filtered_spind_masks, cube_coords)
+
+            viewer.add_image(pi_cube, name = f'pi_cube_{label_num}', blending = 'additive', visible = False)
+            viewer.add_labels(cell_mask_cube, name=f'cell_mask_cube_{label_num}', blending = 'additive', opacity = 0.5, visible = True)
+            viewer.add_image(tub_cube, name = f'tub_cube_{label_num}', blending = 'additive', visible = True)
+            viewer.add_labels(spind_mask_cube.astype('bool'), name = f'spind_mask_cube_{label_num}', blending = 'additive', opacity = 0.5, visible = True)
+            global curr_label
+            curr_label = label_num
+            print(f'label {label_num} loaded')
+        
+        try:
+            first_label = labels_with_spindles.pop(0)
+            print(f'starting with label {first_label}')
+        except IndexError:
+            print('no labels with spindles found')
+            return
+        
+        load_label_cube(viewer, first_label)
+        
+        @viewer.bind_key('t')
+        def mark_as_bad(viewer):
+            print(f'marking cell {curr_label} as bad')
+            bad_cell_labels.append(int(curr_label))
+            print(f'{len(bad_cell_labels)} cells marked as bad')
+            np.savetxt(self.vect_save_path / (self.embryo_name + f'_bad_cells.txt'), bad_cell_labels, fmt='%i', delimiter=',')
+        
+        @viewer.bind_key('n')
+        def next_cube(viewer):
+            try:
+                next_label = labels_with_spindles.pop(0)
+                print(f'now loading label {next_label}')
+            except IndexError:
+                print('no more labels with spindles found')
+                return
+            load_label_cube(viewer, next_label)
+
+        napari.run()
+
     def interact(self, show_curr_cell = False, cell_opacity = 0.35, spindle_opacity = 0.35):
         '''
         Open a napari viewer to interactively visualize the position of the cell and spindle 
@@ -426,14 +568,6 @@ class EmbryoSeg():
         cell_opacity : float the opacity of the cell masks in the viewer
         spindle_opacity : float the opacity of the spindle masks in the viewer
         '''
-
-        def line_from_vect(v, c, length = 50):
-            '''
-            return a line given a vector v and centroid c
-            '''
-            v_points = v * np.mgrid[-length:length:2j][:, np.newaxis]
-            v_points += c
-            return v_points
 
         if not any([os.path.isfile(f) for f in [self.segmentation_path,
                                                 self.filt_mask_save,
